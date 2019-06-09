@@ -18,7 +18,7 @@ CURSOR_DRAW = Qt.CrossCursor
 CURSOR_MOVE = Qt.ClosedHandCursor
 CURSOR_GRAB = Qt.OpenHandCursor
 
-# class Canvas(QGLWidget):
+# class Canvas(QGLWidget):画布定义
 
 
 class Canvas(QWidget):
@@ -42,7 +42,7 @@ class Canvas(QWidget):
         self.selectedShape = None  # save the selected shape here
         self.selectedShapeCopy = None
         self.drawingLineColor = QColor(0, 0, 255)
-        self.drawingRectColor = QColor(0, 0, 255)
+        self.drawingRectColor = QColor(255, 0, 0)
         self.line = Shape(line_color=self.drawingLineColor)
         self.prevPoint = QPointF()
         self.offsets = QPointF(), QPointF()

@@ -7,6 +7,7 @@ import platform
 import re
 import sys
 import subprocess
+import shutil
 
 from functools import partial
 from collections import defaultdict
@@ -27,6 +28,7 @@ except ImportError:
     from PyQt4.QtCore import *
 
 from libs.resources import *
+from resources import *
 from libs.constants import *
 from libs.utils import *
 from libs.settings import Settings
@@ -49,13 +51,13 @@ __appname__ = 'labelImg'
 
 class WindowMixin(object):
 
-    def menu(self, title, actions=None):
+    def menu(self, title, actions=None):#menu
         menu = self.menuBar().addMenu(title)
         if actions:
             addActions(menu, actions)
         return menu
 
-    def toolbar(self, title, actions=None):
+    def toolbar(self, title, actions=None):#工具栏
         toolbar = ToolBar(title)
         toolbar.setObjectName(u'%sToolBar' % title)
         # toolbar.setOrientation(Qt.Vertical)
@@ -69,7 +71,7 @@ class WindowMixin(object):
 class MainWindow(QMainWindow, WindowMixin):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
 
-    def __init__(self, defaultFilename=None, defaultPrefdefClassFile=None, defaultSaveDir=None):
+    def __init__(self,defaultFilename=None, defaultPrefdefClassFile=None, defaultSaveDir=None,deleteDir=None):
         super(MainWindow, self).__init__()
         self.setWindowTitle(__appname__)
 
@@ -84,14 +86,17 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Save as Pascal voc xml
         self.defaultSaveDir = defaultSaveDir
+        self.deleteDir=deleteDir#删除文件夹
         self.usingPascalVocFormat = True
         self.usingYoloFormat = False
 
-        # For loading all image under a directory
+        # For loading all image under a directory读取全部图片
         self.mImgList = []
+        self.mXmlList=[]
         self.dirname = None
         self.labelHist = []
         self.lastOpenDir = None
+        self.step=0#进度条值
 
         # Whether we need to save or not.
         self.dirty = False
@@ -111,15 +116,15 @@ class MainWindow(QMainWindow, WindowMixin):
         self.shapesToItems = {}
         self.prevLabelText = ''
 
-        listLayout = QVBoxLayout()
+        listLayout = QVBoxLayout()#label列表
         listLayout.setContentsMargins(0, 0, 0, 0)
 
         # Create a widget for using default label
-        self.useDefaultLabelCheckbox = QCheckBox(getStr('useDefaultLabel'))
+        self.useDefaultLabelCheckbox = QCheckBox(getStr('useDefaultLabel'))#是否使用默认label选项
         self.useDefaultLabelCheckbox.setChecked(False)
         self.defaultLabelTextLine = QLineEdit()
         useDefaultLabelQHBoxLayout = QHBoxLayout()
-        useDefaultLabelQHBoxLayout.addWidget(self.useDefaultLabelCheckbox)
+        useDefaultLabelQHBoxLayout.addWidget(self.useDefaultLabelCheckbox)  
         useDefaultLabelQHBoxLayout.addWidget(self.defaultLabelTextLine)
         useDefaultLabelContainer = QWidget()
         useDefaultLabelContainer.setLayout(useDefaultLabelQHBoxLayout)
@@ -132,6 +137,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.editButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         # Add some of widgets to listLayout
+
         listLayout.addWidget(self.editButton)
         listLayout.addWidget(self.diffcButton)
         listLayout.addWidget(useDefaultLabelContainer)
@@ -147,14 +153,20 @@ class MainWindow(QMainWindow, WindowMixin):
         self.labelList.itemChanged.connect(self.labelItemChanged)
         listLayout.addWidget(self.labelList)
 
+
         self.dock = QDockWidget(getStr('boxLabelText'), self)
         self.dock.setObjectName(getStr('labels'))
         self.dock.setWidget(labelListContainer)
+        #进度条显示，位于文件列表上方
+        self.pbar = QProgressBar(self)
 
         self.fileListWidget = QListWidget()
-        self.fileListWidget.itemDoubleClicked.connect(self.fileitemDoubleClicked)
+        self.fileListWidget.itemDoubleClicked.connect(self.fileitemDoubleClicked)#文件列表
         filelistLayout = QVBoxLayout()
         filelistLayout.setContentsMargins(0, 0, 0, 0)
+
+        filelistLayout.addWidget(self.pbar)#加入进度条
+
         filelistLayout.addWidget(self.fileListWidget)
         fileListContainer = QWidget()
         fileListContainer.setLayout(filelistLayout)
@@ -199,6 +211,10 @@ class MainWindow(QMainWindow, WindowMixin):
 
         open = action(getStr('openFile'), self.openFile,
                       'Ctrl+O', 'open', getStr('openFileDetail'))
+
+
+        deleteFile=action(getStr('deleteFile'),self.deleteFile,
+                       None,'delete',getStr('deleteFile'))#添加delete的action
 
         opendir = action(getStr('openDir'), self.openDirDialog,
                          'Ctrl+u', 'open', getStr('openDir'))
@@ -388,8 +404,9 @@ class MainWindow(QMainWindow, WindowMixin):
             action('&Move here', self.moveShape)))
 
         self.tools = self.toolbar('Tools')
+        #添加按键？
         self.actions.beginner = (
-            open, opendir, changeSavedir, openNextImg, openPrevImg, verify, save, save_format, None, create, copy, delete, None,
+            open, opendir, changeSavedir,deleteFile,openNextImg, openPrevImg, verify, save, save_format, None, create, copy, delete, None,
             zoomIn, zoom, zoomOut, fitWindow, fitWidth)
 
         self.actions.advanced = (
@@ -671,7 +688,7 @@ class MainWindow(QMainWindow, WindowMixin):
             item.setBackground(generateColorByText(text))
             self.setDirty()
 
-    # Tzutalin 20160906 : Add file list and dock to move faster
+    # Tzutalin 20160906 : Add file list and dock to move faster：点击文件列表快速跳转到文件
     def fileitemDoubleClicked(self, item=None):
         currIndex = self.mImgList.index(ustr(item.text()))
         if currIndex < len(self.mImgList):
@@ -1127,16 +1144,27 @@ class MainWindow(QMainWindow, WindowMixin):
     def scanAllImages(self, folderPath):
         extensions = ['.%s' % fmt.data().decode("ascii").lower() for fmt in QImageReader.supportedImageFormats()]
         images = []
-
         for root, dirs, files in os.walk(folderPath):
             for file in files:
                 if file.lower().endswith(tuple(extensions)):
                     relativePath = os.path.join(root, file)
-                    path = ustr(os.path.abspath(relativePath))
-                    images.append(path)
+                    if not "\del" in relativePath:
+                        path = ustr(os.path.abspath(relativePath))
+                        images.append(path)
         natural_sort(images, key=lambda x: x.lower())
         return images
-
+    def scanAllXmls(self,folderPath):
+       # extensions=['xml','json']
+        xmls=[]
+        for root,dirs,files in os.walk(folderPath):
+            for file in files:
+                if file.lower().endswith("xml"):
+                    relativePath=os.path.join(root,file)
+                    if not "\del" in relativePath:
+                        path=ustr(os.path.abspath(relativePath))
+                        xmls.append(path)
+        natural_sort(xmls,key=lambda x:x.lower())
+        return xmls
     def changeSavedirDialog(self, _value=False):
         if self.defaultSaveDir is not None:
             path = ustr(self.defaultSaveDir)
@@ -1179,13 +1207,12 @@ class MainWindow(QMainWindow, WindowMixin):
             defaultOpenDirPath = self.lastOpenDir
         else:
             defaultOpenDirPath = os.path.dirname(self.filePath) if self.filePath else '.'
-
         targetDirPath = ustr(QFileDialog.getExistingDirectory(self,
                                                      '%s - Open Directory' % __appname__, defaultOpenDirPath,
                                                      QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks))
         self.importDirImages(targetDirPath)
 
-    def importDirImages(self, dirpath):
+    def importDirImages(self, dirpath):#遍历文件夹
         if not self.mayContinue() or not dirpath:
             return
 
@@ -1194,10 +1221,12 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filePath = None
         self.fileListWidget.clear()
         self.mImgList = self.scanAllImages(dirpath)
+        self.mXmlList=self.scanAllXmls(dirpath)
         self.openNextImg()
         for imgPath in self.mImgList:
             item = QListWidgetItem(imgPath)
             self.fileListWidget.addItem(item)
+        self.updateStep(dirpath)
 
     def verifyImg(self, _value=False):
         # Proceding next image without dialog if having any label
@@ -1280,7 +1309,44 @@ class MainWindow(QMainWindow, WindowMixin):
             if isinstance(filename, (tuple, list)):
                 filename = filename[0]
             self.loadFile(filename)
-
+    #定义delete模块功能
+    def deleteFile(self,_value=False):
+        if not self.mayContinue():
+            return
+        if self.filePath:
+            imgFile=os.path.dirname(self.filePath)
+            imgFileName=os.path.basename(self.filePath)
+            imgFileName=imgFileName[0]#取出基础文件名
+            deletePath=imgFile+"/del"#创建删除文件夹
+            if not os.path.exists(deletePath):
+                os.mkdir(deletePath)
+            xmlFilePath=imgFile+'/'+imgFileName+'.xml'
+            imgFilePath=imgFile+'/'+os.path.basename(self.filePath)
+            #先保存下一张图片
+            filename = None
+            if self.filePath is None:
+                filename = self.mImgList[0]
+            else:
+                try:
+                    currIndex = self.mImgList.index(self.filePath)
+                    if currIndex + 1 < len(self.mImgList):
+                        filename = self.mImgList[currIndex + 1]
+                except:
+                    print("list is empty")
+                    self.loadFile("empty")
+            if os.path.exists(imgFilePath):
+                shutil.move(imgFilePath,deletePath)
+            if os.path.exists(xmlFilePath):
+                shutil.move(xmlFilePath,deletePath)
+            #读取下一张图片
+            if filename:
+                self.loadFile(filename)
+            self.updateStep(imgFile)
+            self.fileListWidget.clear()
+            for imgPath in self.mImgList:
+                item = QListWidgetItem(imgPath)
+                self.fileListWidget.addItem(item)
+        
     def saveFile(self, _value=False):
         if self.defaultSaveDir is not None and len(ustr(self.defaultSaveDir)):
             if self.filePath:
@@ -1293,8 +1359,12 @@ class MainWindow(QMainWindow, WindowMixin):
             imgFileName = os.path.basename(self.filePath)
             savedFileName = os.path.splitext(imgFileName)[0]
             savedPath = os.path.join(imgFileDir, savedFileName)
+            print(self.labelFile)
             self._saveFile(savedPath if self.labelFile
-                           else self.saveFileDialog(removeExt=False))
+                          else self.saveFileDialog(removeExt=False))
+        imgFile=os.path.dirname(self.filePath)
+        self.updateStep(imgFile)
+
 
     def saveFileAs(self, _value=False):
         assert not self.image.isNull(), "cannot save empty image"
@@ -1341,6 +1411,14 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def mayContinue(self):
         return not (self.dirty and not self.discardChangesDialog())
+    def updateStep(self,filePath):
+        self.mImgList=self.scanAllImages(filePath)
+        img=len(self.mImgList)
+        self.mXmlList=self.scanAllXmls(filePath)
+        xml=len(self.mXmlList)
+        if not img==0:
+            self.step=int((float(xml)/float(img))*100)
+        self.pbar.setValue(self.step)
 
     def discardChangesDialog(self):
         yes, no = QMessageBox.Yes, QMessageBox.No

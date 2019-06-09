@@ -44,7 +44,7 @@ class StringBundle:
 
     def __createLookupFallbackList(self, localeStr):
         resultPaths = []
-        basePath = "D:/workspace/labelme/labelImg/resources/strings/strings-zh-CN.properties"
+        basePath = ":/strings"
         resultPaths.append(basePath)
         if localeStr is not None:
             # Don't follow standard BCP47. Simple fallback
@@ -57,8 +57,8 @@ class StringBundle:
 
     def __loadBundle(self, path):
         PROP_SEPERATOR = '='
+        path=r'D:\workspace\labelme\labelme\resources\strings\strings-zh-CN.properties'
         f = QFile(path)
-        #print(path)
         if f.exists():
             if f.open(QIODevice.ReadOnly | QFile.Text):
                 text = QTextStream(f)

@@ -38,7 +38,7 @@ required_packages.append('labelImg')
 APP = [NAME + '.py']
 OPTIONS = {
     'argv_emulation': True,
-    'iconfile': 'resources/icons/app.icns'
+    'iconfile': './resources/icons/app.icns'
 }
 
 class UploadCommand(Command):
